@@ -1,14 +1,43 @@
 let transactions = [];
 let unposted = [];
 let myChart;
+let db = null;
 
-if (localStorage.unposted) {
-	unposted = JSON.parse(localStorage.unposted)
+function initialize() {
+	let openRequest = indexedDB.open("budget", 1);
+	openRequest.onupgradeneeded = (event) => {
+		const oldVersion = event.oldVersion;
+		const db = openRequest.result;
+		switch (oldVersion) {
+			case 0: //DB does not exist
+			db.createObjectStore("unposted", { keyPath : "date" })
+			break;
+		}
+	};
+	
+	openRequest.onsuccess = () => {
+		db = openRequest.result;
+		const transaction = db.transaction(["unposted"], "readwrite");
+		const store = transaction.objectStore("unposted");
+		
+		const getAllRequest = store.getAll();
+		getAllRequest.onsuccess = () => {
+			console.log(getAllRequest.result)
+			unposted = getAllRequest.result
+			retryFailedTransactions();
+		};
+	}
+	
 }
+
+initialize();
 
 function saveRecord(record) {
 	unposted[unposted.length] = record;
-	localStorage.unposted = JSON.stringify(unposted);
+	const transaction = db.transaction(["unposted"], "readwrite");
+	const store = transaction.objectStore("unposted");
+	
+	store.add(record);
 	
 }
 
@@ -34,9 +63,13 @@ async function retryFailedTransactions() {
 				const data = await response.json();
 				
 				if (!data.errors) {
-					unposted.shift();
-					localStorage.unposted = JSON.stringify(unposted);
+					const removed = unposted.shift();
 					console.log("successfully sent transaction")
+					
+					const transaction = db.transaction(["unposted"], "readwrite");
+					const store = transaction.objectStore("unposted");
+
+					store.delete(removed.date);
 				}
 			} else {
 				console.log("No Failed Transactions to send, waiting 1 minute.");
@@ -50,7 +83,7 @@ async function retryFailedTransactions() {
 	}
 }
 
-retryFailedTransactions();
+
 
 fetch("/api/transaction")
 .then(response => {
